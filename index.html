@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fondo Fonte Simulator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="screen active" id="step1">
+  <div class="card">
+    <h1>Fondo Fonte</h1>
+    <p>Qual è la tua RAL?</p>
+    <input id="ral" type="text" placeholder="35.000">
+    <button id="next">Continua →</button>
+  </div>
+</div>
+
+<div class="screen" id="step2">
+  <div class="card">
+    <h1>Contributo</h1>
+    <div id="percent">1,55%</div>
+    <input id="slider" type="range" min="0" max="10" step="0.05" value="1.55">
+    <p id="summary"></p>
+    <button id="back">← Indietro</button>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
