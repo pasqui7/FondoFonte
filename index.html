@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calcolatore Fondo Pensione — Detrazioni IRPEF</title>
+<meta name="description" content="Calcola il risparmio fiscale e l'accumulo nel fondo pensione a partire dalla tua RAL.">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+body {
+  margin: 0;
+  background: #11161C;
+}
+
+.font-display { font-family: 'Fraunces', serif; font-optical-sizing: auto; }
+.font-mono { font-family: 'IBM Plex Mono', monospace; }
+
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #D4A24C; cursor: pointer; border: 2px solid #11161C;
+  margin-top: -7px;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px; background: #2A3540;
+}
+
+.receipt-edge {
+  height: 14px;
+  background:
+    linear-gradient(135deg, #11161C 50%, transparent 50%) 0 0,
+    linear-gradient(45deg, #11161C 50%, transparent 50%) 0 0;
+  background-size: 16px 16px;
+  background-repeat: repeat-x;
+  background-color: #1E2833;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fade-in { animation: fadeIn 0.45s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px);} to { opacity:1; transform:none; } }
+
+  .ral-pending { animation: ralBlink 1.4s ease-in-out infinite; }
+  @keyframes ralBlink {
+    0%, 100% { border-color: #2A3540; background-color: transparent; }
+    50% { border-color: #D4A24C; background-color: rgba(212,162,76,0.10); }
+  }
+
+  .glow { animation: glowPulse 3s ease-in-out infinite; }
+  @keyframes glowPulse {
+    0%, 100% { box-shadow: 0 0 0px rgba(193,102,61,0); }
+    50% { box-shadow: 0 0 28px rgba(193,102,61,0.18); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ral-pending { border-color: #D4A24C; }
+}
+</style>
+</head>
+<body>
+<div id="error-banner" style="display:none; position:fixed; inset:0; background:#1a0d0d; color:#ff8a80; font-family:monospace; font-size:13px; padding:20px; white-space:pre-wrap; overflow:auto; z-index:9999;"></div>
+<div id="root"></div>
+
+<script id="app-source" type="text/plain">
+const { useState, useMemo } = React;
+
+// --- Motore di calcolo IRPEF (scaglioni 2024/2025) -------------------------
+const SCAGLIONI = [
+  { min: 0, max: 15000, aliquota: 0.23, label: "1°", range: "fino a € 15.000" },
+  { min: 15000, max: 28000, aliquota: 0.25, label: "2°", range: "da € 15.001 a € 28.000" },
+  { min: 28000, max: 50000, aliquota: 0.35, label: "3°", range: "da € 28.001 a € 50.000" },
+  { min: 50000, max: Infinity, aliquota: 0.43, label: "4°", range: "oltre € 50.000" },
+];
+
+const LIMITE_DEDUCIBILE = 5300; // limite annuo di deducibilità fondi pensione, Legge di Bilancio 2026 (art. 8 D.Lgs. 252/2005) — in vigore per l'intero 2026, era € 5.164,57
+const PCT_AZIENDA_DEFAULT = 1.55; // contributo azienda tipico, informativo, non richiesto in fase di input
+const BRACKET_COLORS = ["#2E5F52", "#3F8471", "#D4A24C", "#C1663D"];
+
+function calcolaScaglioni(reddito) {
+  let residuo = reddito;
+  return SCAGLIONI.map((s) => {
+    const ampiezza = s.max - s.min;
+    const imponibileScaglione = Math.max(0, Math.min(residuo, ampiezza));
+    const imposta = imponibileScaglione * s.aliquota;
+    residuo -= imponibileScaglione;
+    return { ...s, imponibileScaglione, imposta };
+  });
+}
+
+function fmt(n) {
+  return n.toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "€";
+}
+
+function clamp(v, min, max) {
+  return Math.min(max, Math.max(min, v));
+}
+
+// Piccolo stepper +/- riusabile per le percentuali
+function Stepper({ value, onChange, min = 0, max = 100, step = 0.5, decimals = 2, suffix = "%" }) {
+  return (
+    <div className="flex items-center justify-center gap-5">
+      <button
+        type="button"
+        onClick={() => onChange(clamp(Number((value - step).toFixed(2)), min, max))}
+        aria-label="Diminuisci"
+        className="w-11 h-11 rounded-full border border-[#2A3540] text-[#D4A24C] text-xl font-mono flex items-center justify-center hover:border-[#D4A24C] hover:bg-[#D4A24C]/10 active:scale-95 transition-all"
+      >
+        −
+      </button>
+      <p className="font-mono text-4xl text-[#F1DDB0] tabular-nums w-32 text-center">
+        {value.toFixed(decimals)}{suffix}
+      </p>
+      <button
+        type="button"
+        onClick={() => onChange(clamp(Number((value + step).toFixed(2)), min, max))}
+        aria-label="Aumenta"
+        className="w-11 h-11 rounded-full border border-[#2A3540] text-[#D4A24C] text-xl font-mono flex items-center justify-center hover:border-[#D4A24C] hover:bg-[#D4A24C]/10 active:scale-95 transition-all"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
+function PresetRow({ options, value, onPick, suffix = "%" }) {
+  return (
+    <div className="flex flex-wrap justify-center gap-2">
+      {options.map((v) => (
+        <button
+          key={v}
+          onClick={() => onPick(v)}
+          className={
+            "font-mono text-xs px-3 py-1.5 rounded-full border transition-colors " +
+            (Number(value) === v
+              ? "border-[#D4A24C] bg-[#D4A24C] text-[#11161C]"
+              : "border-[#2A3540] text-[#7C8898] hover:border-[#3A4756]")
+          }
+        >
+          {v}{suffix}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// --- Componente principale ---------------------------------------------
+function App() {
+  const [step, setStep] = useState(1); // 1: RAL · 2: % fondo · 3: % TFR · 4: risultati
+  const [ral, setRal] = useState("");
+  const [pctAderente, setPctAderente] = useState("");
+  const [pctTfr, setPctTfr] = useState("");
+  const [simAperta, setSimAperta] = useState(false);
+
+  const ralValida = ral !== "" && Number(ral) > 0;
+  const pctFondoValida = pctAderente !== "" && Number(pctAderente) >= 0;
+  const pctTfrValida = pctTfr !== "" && Number(pctTfr) >= 0;
+
+  const risultato = useMemo(() => {
+    const ralNum = Number(ral) || 0;
+    const pctAderenteNum = Number(pctAderente) || 0;
+    const pctTfrNum = Number(pctTfr) || 0;
+
+    const versamentoLordo = ralNum * (pctAderenteNum / 100);
+    const versamentoDeducibile = Math.min(versamentoLordo, LIMITE_DEDUCIBILE);
+    const oltreLimite = versamentoLordo - versamentoDeducibile;
+
+    const scaglioniPrima = calcolaScaglioni(ralNum);
+    const imposteTotaliPrima = scaglioniPrima.reduce((a, s) => a + s.imposta, 0);
+
+    const redditoRicalcolato = Math.max(0, ralNum - versamentoDeducibile);
+    const scaglioniDopo = calcolaScaglioni(redditoRicalcolato);
+    const imposteTotaliDopo = scaglioniDopo.reduce((a, s) => a + s.imposta, 0);
+
+    const risparmioAnnuo = imposteTotaliPrima - imposteTotaliDopo;
+    const versamentoMensile = versamentoLordo / 12;
+    const risparmioMensile = risparmioAnnuo / 12;
+    const costoRealeMensile = versamentoMensile - risparmioMensile;
+    const costoRealeAnnuo = versamentoLordo - risparmioAnnuo;
+
+    const contributoAziendaAnnuo = ralNum * (PCT_AZIENDA_DEFAULT / 100);
+
+    // TFR: quota annua di legge ≈ RAL / 13,5. Non è deducibile (art. 10 TUIR esclude il TFR
+    // dal plafond dei fondi pensione) e in uscita segue la tassazione separata, non l'IRPEF.
+    const tfrAnnuoMaturato = ralNum / 13.5;
+    const tfrConferitoAlFondo = tfrAnnuoMaturato * (pctTfrNum / 100);
+
+    const accumuloAnnuoTotale = versamentoLordo + contributoAziendaAnnuo + tfrConferitoAlFondo;
+
+    return {
+      ralNum,
+      versamentoLordo,
+      versamentoDeducibile,
+      oltreLimite,
+      redditoRicalcolato,
+      imposteTotaliPrima,
+      imposteTotaliDopo,
+      risparmioAnnuo,
+      versamentoMensile,
+      risparmioMensile,
+      costoRealeMensile,
+      costoRealeAnnuo,
+      contributoAziendaAnnuo,
+      tfrAnnuoMaturato,
+      tfrConferitoAlFondo,
+      accumuloAnnuoTotale,
+    };
+  }, [ral, pctAderente, pctTfr]);
+
+  const maxScaglione = 80000;
+
+  function reset() {
+    setStep(1);
+    setRal("");
+    setPctAderente("");
+    setPctTfr("");
+  }
+
+  function riepilogoTesto() {
+    return [
+      "PROSPETTO FONDO PENSIONE",
+      "",
+      `RAL: € ${fmt(risultato.ralNum)}`,
+      `% destinata al fondo: ${Number(pctAderente).toFixed(2)}%`,
+      `% TFR conferito al fondo: ${Number(pctTfr).toFixed(0)}%`,
+      "",
+      "--- LATO FISCALE ---",
+      `Reddito senza fondo: € ${fmt(risultato.ralNum)}`,
+      `Versamento deducibile: € ${fmt(risultato.versamentoDeducibile)}`,
+      `Reddito ricalcolato: € ${fmt(risultato.redditoRicalcolato)}`,
+      `Risparmio fiscale annuo: € ${fmt(risultato.risparmioAnnuo)}`,
+      "",
+      "--- LATO ACCUMULO ---",
+      `Contributo azienda: € ${fmt(risultato.contributoAziendaAnnuo)}`,
+      `TFR maturato: € ${fmt(risultato.tfrAnnuoMaturato)}`,
+      `TFR conferito al fondo: € ${fmt(risultato.tfrConferitoAlFondo)}`,
+      `Accumulo annuo totale: € ${fmt(risultato.accumuloAnnuoTotale)}`,
+      "",
+      "--- OGNI MESE ---",
+      `Versamento lordo: € ${fmt(risultato.versamentoMensile)}`,
+      `Risparmio fiscale: € ${fmt(risultato.risparmioMensile)}`,
+      `Costo reale a tuo carico: € ${fmt(risultato.costoRealeMensile)}`,
+      "",
+      "Simulazione indicativa, non sostituisce una consulenza fiscale.",
+    ].join("\n");
+  }
+
+  function handleDownload() {
+    const blob = new Blob([riepilogoTesto()], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "prospetto-fondo-pensione.txt";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function handleEmail() {
+    const subject = encodeURIComponent("Prospetto fondo pensione");
+    const body = encodeURIComponent(riepilogoTesto());
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  }
+
+  return (
+    <div className="min-h-screen w-full bg-[#11161C] text-[#ECE8DE] font-[Inter] flex flex-col items-center justify-center px-4 py-10">
+      {step === 1 && (
+        <div className="fade-in max-w-md text-center mb-8">
+          <p className="font-display text-lg text-[#ECE8DE] mb-2">
+            Fondo pensione: quanto risparmi, quanto accumuli
+          </p>
+          <p className="font-mono text-xs text-[#7C8898] leading-relaxed">
+            Rispondi a 3 domande sulla tua RAL e sui versamenti al fondo: calcoliamo il
+            risparmio fiscale, l'accumulo annuo e quanto ti costa davvero ogni mese.
+          </p>
+        </div>
+      )}
+
+      <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-[#5B6674] mb-10 fade-in">
+        Step {Math.min(step, 4)} di 4
+      </p>
+
+      {/* STEP 1 — RAL */}
+      {step === 1 && (
+        <div key="s1" className="fade-in w-full max-w-md flex flex-col items-center text-center gap-6">
+          <h1 className="font-display text-2xl sm:text-3xl font-semibold text-[#F1DDB0]">
+            Qual è la tua RAL?
+          </h1>
+          <p className="font-mono text-xs text-[#7C8898] -mt-3">Reddito Annuo Lordo</p>
+          <div
+            className={
+              "flex items-center justify-center gap-2 border-b-2 transition-colors rounded-sm px-2 w-full max-w-xs " +
+              (ralValida ? "border-[#2A3540] focus-within:border-[#D4A24C]" : "ral-pending border-[#D4A24C]")
+            }
+          >
+            <span className="font-mono text-xl text-[#7C8898]">€</span>
+            <input
+              type="number"
+              autoFocus
+              value={ral}
+              min={0}
+              step={500}
+              placeholder="es. 35000"
+              onChange={(e) => setRal(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && ralValida) setStep(2); }}
+              className="font-mono text-2xl bg-transparent outline-none w-full py-2 text-[#F1DDB0] text-center placeholder:text-[#2A3540]"
+            />
+          </div>
+          <button
+            onClick={() => ralValida && setStep(2)}
+            disabled={!ralValida}
+            className={
+              "font-mono text-sm uppercase tracking-wider px-8 py-3 rounded-sm border transition-colors mt-2 " +
+              (ralValida
+                ? "border-[#D4A24C] text-[#D4A24C] hover:bg-[#D4A24C] hover:text-[#11161C] cursor-pointer"
+                : "border-[#2A3540] text-[#3A4756] cursor-not-allowed")
+            }
+          >
+            Continua
+          </button>
+        </div>
+      )}
+
+      {/* STEP 2 — % fondo pensione */}
+      {step === 2 && (
+        <div key="s2" className="fade-in w-full max-w-md flex flex-col items-center text-center gap-7">
+          <div>
+            <h1 className="font-display text-2xl sm:text-3xl font-semibold text-[#F1DDB0]">
+              Quanto vuoi destinare al fondo pensione?
+            </h1>
+            <p className="font-mono text-xs text-[#7C8898] mt-2">In percentuale della RAL</p>
+          </div>
+
+          <PresetRow options={[0.55, 1, 1.55, 2, 3, 5]} value={pctAderente} onPick={setPctAderente} />
+
+          <Stepper
+            value={Number(pctAderente || 0)}
+            onChange={(v) => setPctAderente(v)}
+            min={0}
+            max={10}
+            step={0.5}
+            decimals={2}
+          />
+
+          <input
+            type="range"
+            min={0}
+            max={10}
+            step={0.05}
+            value={pctAderente || 0}
+            onChange={(e) => setPctAderente(e.target.value)}
+            className="w-full max-w-xs"
+            aria-label="Percentuale destinata al fondo pensione"
+          />
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => setStep(1)}
+              className="font-mono text-sm uppercase tracking-wider px-6 py-3 rounded-sm border border-[#2A3540] text-[#7C8898] hover:border-[#3A4756] transition-colors"
+            >
+              Indietro
+            </button>
+            <button
+              onClick={() => pctFondoValida && setStep(3)}
+              disabled={!pctFondoValida}
+              className={
+                "font-mono text-sm uppercase tracking-wider px-8 py-3 rounded-sm border transition-colors " +
+                (pctFondoValida
+                  ? "border-[#D4A24C] text-[#D4A24C] hover:bg-[#D4A24C] hover:text-[#11161C] cursor-pointer"
+                  : "border-[#2A3540] text-[#3A4756] cursor-not-allowed")
+              }
+            >
+              Continua
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 3 — % TFR */}
+      {step === 3 && (
+        <div key="s3" className="fade-in w-full max-w-md flex flex-col items-center text-center gap-7">
+          <div>
+            <h1 className="font-display text-2xl sm:text-3xl font-semibold text-[#F1DDB0]">
+              Quanto TFR metti nel fondo?
+            </h1>
+            <p className="font-mono text-xs text-[#7C8898] mt-2">Percentuale del TFR maturato ogni anno</p>
+          </div>
+
+          <PresetRow options={[0, 25, 50, 75, 100]} value={pctTfr} onPick={setPctTfr} />
+
+          <Stepper
+            value={Number(pctTfr || 0)}
+            onChange={(v) => setPctTfr(v)}
+            min={0}
+            max={100}
+            step={0.5}
+            decimals={1}
+          />
+
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={0.5}
+            value={pctTfr || 0}
+            onChange={(e) => setPctTfr(e.target.value)}
+            className="w-full max-w-xs"
+            aria-label="Percentuale di TFR conferita al fondo"
+          />
+
+          <p className="font-mono text-[10px] text-[#5B6674] max-w-xs leading-relaxed">
+            Il TFR non è deducibile: non riduce le imposte, ma si accumula nel fondo.
+          </p>
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => setStep(2)}
+              className="font-mono text-sm uppercase tracking-wider px-6 py-3 rounded-sm border border-[#2A3540] text-[#7C8898] hover:border-[#3A4756] transition-colors"
+            >
+              Indietro
+            </button>
+            <button
+              onClick={() => pctTfrValida && setStep(4)}
+              disabled={!pctTfrValida}
+              className={
+                "font-mono text-sm uppercase tracking-wider px-8 py-3 rounded-sm border transition-colors " +
+                (pctTfrValida
+                  ? "border-[#D4A24C] text-[#D4A24C] hover:bg-[#D4A24C] hover:text-[#11161C] cursor-pointer"
+                  : "border-[#2A3540] text-[#3A4756] cursor-not-allowed")
+              }
+            >
+              Calcola
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 4 — risultati */}
+      {step === 4 && (
+        <div key="s4" className="fade-in w-full max-w-3xl flex flex-col gap-8">
+          <div className="flex items-baseline justify-between border-b border-[#2A3540] pb-4">
+            <h1 className="font-display text-2xl sm:text-3xl font-semibold text-[#F1DDB0]">
+              Il tuo prospetto
+            </h1>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setSimAperta((v) => !v)}
+                className="font-mono text-[11px] uppercase tracking-wider text-[#D4A24C] hover:text-[#F1DDB0] transition-colors"
+              >
+                {simAperta ? "Chiudi simulazione" : "Modifica percentuali"}
+              </button>
+              <button
+                onClick={reset}
+                className="font-mono text-[11px] uppercase tracking-wider text-[#7C8898] hover:text-[#D4A24C] transition-colors"
+              >
+                Ricomincia
+              </button>
+            </div>
+          </div>
+
+          {simAperta && (
+            <div className="bg-[#1A222B] border border-[#2A3540] rounded-sm p-6 grid grid-cols-1 sm:grid-cols-2 gap-8">
+              <div className="flex flex-col items-center gap-4">
+                <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#7C8898]">
+                  % destinata al fondo pensione
+                </p>
+                <PresetRow options={[0.55, 1, 1.55, 2, 3, 5]} value={pctAderente} onPick={setPctAderente} />
+                <Stepper
+                  value={Number(pctAderente || 0)}
+                  onChange={(v) => setPctAderente(v)}
+                  min={0}
+                  max={10}
+                  step={0.5}
+                  decimals={2}
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={10}
+                  step={0.05}
+                  value={pctAderente || 0}
+                  onChange={(e) => setPctAderente(e.target.value)}
+                  className="w-full max-w-xs"
+                  aria-label="Percentuale destinata al fondo pensione"
+                />
+              </div>
+              <div className="flex flex-col items-center gap-4">
+                <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#7C8898]">
+                  % di TFR conferita al fondo
+                </p>
+                <PresetRow options={[0, 25, 50, 75, 100]} value={pctTfr} onPick={setPctTfr} />
+                <Stepper
+                  value={Number(pctTfr || 0)}
+                  onChange={(v) => setPctTfr(v)}
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  decimals={1}
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  value={pctTfr || 0}
+                  onChange={(e) => setPctTfr(e.target.value)}
+                  className="w-full max-w-xs"
+                  aria-label="Percentuale di TFR conferita al fondo"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Hero: scontrino con il costo reale a carico del lavoratore */}
+          <div className="glow rounded-sm overflow-hidden max-w-sm mx-auto w-full">
+            <div className="bg-[#1E2833] pt-8 pb-6 px-8 text-center">
+              <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#8FA0A8] mb-1">
+                Quota a carico tuo, al netto del risparmio
+              </p>
+              <p className="font-display text-3xl text-[#ECE8DE] mb-4">Costo reale mensile</p>
+              <p className="font-mono text-5xl sm:text-6xl font-semibold text-[#E08A5B] tabular-nums">
+                {fmt(risultato.costoRealeMensile)}
+              </p>
+              <div className="mt-6 pt-5 border-t border-dashed border-[#3A4756] flex justify-between font-mono text-[11px] text-[#8FA0A8]">
+                <span>Versamento lordo</span>
+                <span className="text-[#ECE8DE]">{fmt(risultato.versamentoMensile)}</span>
+              </div>
+              <div className="mt-2 flex justify-between font-mono text-[11px] text-[#8FA0A8]">
+                <span>− Risparmio fiscale</span>
+                <span className="text-[#5FAE8F]">{fmt(risultato.risparmioMensile)}</span>
+              </div>
+            </div>
+            <div className="receipt-edge" />
+          </div>
+
+          {/* Due numeri annuali di contesto */}
+          <div className="grid grid-cols-2 gap-4 max-w-sm mx-auto w-full -mt-2">
+            <div className="text-center">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-[#5B6674] mb-1">Risparmio fiscale/anno</p>
+              <p className="font-display text-lg text-[#5FAE8F]">{fmt(risultato.risparmioAnnuo)}</p>
+            </div>
+            <div className="text-center">
+              <p className="font-mono text-[9px] uppercase tracking-wider text-[#5B6674] mb-1">Accumulo fondo/anno</p>
+              <p className="font-display text-lg text-[#D4A24C]">{fmt(risultato.accumuloAnnuoTotale)}</p>
+            </div>
+          </div>
+
+          {/* Barra scaglioni */}
+          <div className="bg-[#1A222B] border border-[#2A3540] rounded-sm p-6">
+            <p className="font-mono text-[11px] uppercase tracking-wider text-[#7C8898] mb-4">
+              Composizione del reddito per scaglione
+            </p>
+            <div className="flex h-8 w-full rounded-sm overflow-hidden border border-[#2A3540]">
+              {SCAGLIONI.map((s, i) => {
+                const ampiezza = Math.min(s.max, maxScaglione) - s.min;
+                const widthPct = (ampiezza / maxScaglione) * 100;
+                const riempito = Math.max(0, Math.min(risultato.ralNum, s.max) - s.min);
+                const fillPct = ampiezza > 0 ? (riempito / ampiezza) * 100 : 0;
+                return (
+                  <div
+                    key={s.label}
+                    style={{ width: `${widthPct}%` }}
+                    className="relative border-r border-[#11161C] last:border-r-0"
+                  >
+                    <div className="absolute inset-0 bg-[#11161C]" />
+                    <div
+                      style={{ width: `${fillPct}%`, background: BRACKET_COLORS[i] }}
+                      className="absolute inset-y-0 left-0 transition-all duration-300"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-between mt-2 font-mono text-[10px] text-[#5B6674]">
+              <span>0€</span>
+              <span>15k€</span>
+              <span>28k€</span>
+              <span>50k€</span>
+              <span>80k€</span>
+            </div>
+          </div>
+
+          {risultato.oltreLimite > 0.01 && (
+            <div className="border border-[#7A4A2A] bg-[#241A10] rounded-sm p-3 -mt-3">
+              <p className="font-mono text-[10px] text-[#E3A36A] leading-relaxed">
+                Il versamento supera il limite deducibile di {fmt(LIMITE_DEDUCIBILE)}/anno.
+                Eccedenza non deducibile: {fmt(risultato.oltreLimite)}.
+              </p>
+            </div>
+          )}
+
+          {/* Due prospetti affiancati: fiscale e accumulo */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-[#1A222B] border border-[#2A3540] rounded-sm overflow-hidden">
+              <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#7C8898] px-4 pt-4 pb-2">
+                Lato fiscale
+              </p>
+              <table className="w-full font-mono text-sm">
+                <tbody>
+                  <tr className="border-t border-[#232D38]">
+                    <td className="py-2.5 px-4 text-[#B7C0C9]">Reddito senza fondo</td>
+                    <td className="py-2.5 px-4 text-right text-[#ECE8DE]">{fmt(risultato.ralNum)}</td>
+                  </tr>
+                  <tr className="border-t border-[#232D38]">
+                    <td className="py-2.5 px-4 text-[#B7C0C9]">Versamento deducibile</td>
+                    <td className="py-2.5 px-4 text-right text-[#ECE8DE]">{fmt(risultato.versamentoDeducibile)}</td>
+                  </tr>
+                  <tr className="border-t border-[#232D38]">
+                    <td className="py-2.5 px-4 text-[#B7C0C9]">Reddito ricalcolato</td>
+                    <td className="py-2.5 px-4 text-right text-[#ECE8DE]">{fmt(risultato.redditoRicalcolato)}</td>
+                  </tr>
+                  <tr className="bg-[#141B22] border-t border-[#232D38]">
+                    <td className="py-3 px-4 font-semibold text-[#ECE8DE]">Risparmio annuo</td>
+                    <td className="py-3 px-4 text-right font-semibold text-[#5FAE8F]">{fmt(risultato.risparmioAnnuo)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="bg-[#1A222B] border border-[#2A3540] rounded-sm overflow-hidden">
+              <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#7C8898] px-4 pt-4 pb-2">
+                Lato accumulo
+              </p>
+              <table className="w-full font-mono text-sm">
+                <tbody>
+                  <tr className="border-t border-[#232D38]">
+                    <td className="py-2.5 px-4 text-[#B7C0C9]">Contributo azienda</td>
+                    <td className="py-2.5 px-4 text-right text-[#ECE8DE]">{fmt(risultato.contributoAziendaAnnuo)}</td>
+                  </tr>
+                  <tr className="border-t border-[#232D38]">
+                    <td className="py-2.5 px-4 text-[#B7C0C9]">TFR maturato</td>
+                    <td className="py-2.5 px-4 text-right text-[#ECE8DE]">{fmt(risultato.tfrAnnuoMaturato)}</td>
+                  </tr>
+                  <tr className="border-t border-[#232D38]">
+                    <td className="py-2.5 px-4 text-[#B7C0C9]">TFR conferito al fondo</td>
+                    <td className="py-2.5 px-4 text-right text-[#ECE8DE]">{fmt(risultato.tfrConferitoAlFondo)}</td>
+                  </tr>
+                  <tr className="bg-[#141B22] border-t border-[#232D38]">
+                    <td className="py-3 px-4 font-semibold text-[#ECE8DE]">Accumulo totale</td>
+                    <td className="py-3 px-4 text-right font-semibold text-[#D4A24C]">{fmt(risultato.accumuloAnnuoTotale)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <p className="font-mono text-[10px] text-[#5B6674] leading-relaxed px-1">
+            Calcolo basato sugli scaglioni IRPEF (23% / 25% / 35% / 43%) e sul limite di
+            deducibilità annuo dei fondi pensione di {fmt(LIMITE_DEDUCIBILE)} (Legge di
+            Bilancio 2026, art. 8 D.Lgs. 252/2005 — in precedenza € 5.164,57). Contributo azienda
+            stimato al {PCT_AZIENDA_DEFAULT}% della RAL. Il TFR conferito al fondo non è
+            deducibile e non entra nel plafond: si somma solo all'accumulo. Non considera
+            eventuale extra-deducibilità per i primi 5 anni di iscrizione. Simulazione
+            indicativa, non sostituisce una consulenza fiscale.
+          </p>
+
+          <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+            <button
+              onClick={handleDownload}
+              className="font-mono text-xs uppercase tracking-wider px-6 py-3 rounded-sm border border-[#2A3540] text-[#B7C0C9] hover:border-[#3A4756] transition-colors"
+            >
+              ⬇ Scarica riepilogo
+            </button>
+            <button
+              onClick={handleEmail}
+              className="font-mono text-xs uppercase tracking-wider px-6 py-3 rounded-sm border border-[#D4A24C] text-[#D4A24C] hover:bg-[#D4A24C] hover:text-[#11161C] transition-colors"
+            >
+              ✉ Invia via email
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+
+<script>
+  try {
+    var src = document.getElementById('app-source').textContent;
+    var compiled = Babel.transform(src, { presets: [['react', { runtime: 'classic' }]] }).code;
+    (0, eval)(compiled);
+  } catch (err) {
+    var banner = document.getElementById('error-banner');
+    banner.style.display = 'block';
+    banner.textContent = 'ERRORE NEL CARICAMENTO DELL\'APP\n\n' + (err && err.message ? err.message : String(err)) + '\n\n' + (err && err.stack ? err.stack : '');
+    if (window.console && console.error) console.error(err);
+  }
+</script>
+</body>
+</html>
