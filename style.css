@@ -1,11 +1,50 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
-body{margin:0;background:#f5f5f7;font-family:-apple-system,sans-serif}
-.screen{display:none;min-height:100vh;justify-content:center;align-items:center;padding:24px}
-.active{display:flex}
-.card{background:#fff;width:min(430px,92vw);padding:28px;border-radius:24px;box-shadow:0 12px 30px rgba(0,0,0,.08)}
-input{width:100%;padding:14px;font-size:26px}
-button{padding:14px 18px;border:0;border-radius:14px;background:#007aff;color:#fff;font-size:17px}
-#pct{font-size:44px;font-weight:700;color:#007aff;text-align:center;margin:15px 0}
-.choice{border:2px solid #ddd;border-radius:18px;padding:16px;margin:14px 0;cursor:pointer;transition:.2s}
-.choice.selected{border-color:#007aff;background:#eef6ff}
-.nav{display:flex;gap:10px;margin-top:22px}.nav button{flex:1}
+body {
+  margin: 0;
+  background: #11161C;
+}
+
+.font-display { font-family: 'Fraunces', serif; font-optical-sizing: auto; }
+.font-mono { font-family: 'IBM Plex Mono', monospace; }
+
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #D4A24C; cursor: pointer; border: 2px solid #11161C;
+  margin-top: -7px;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px; background: #2A3540;
+}
+
+.receipt-edge {
+  height: 14px;
+  background:
+    linear-gradient(135deg, #11161C 50%, transparent 50%) 0 0,
+    linear-gradient(45deg, #11161C 50%, transparent 50%) 0 0;
+  background-size: 16px 16px;
+  background-repeat: repeat-x;
+  background-color: #1E2833;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fade-in { animation: fadeIn 0.45s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px);} to { opacity:1; transform:none; } }
+
+  .ral-pending { animation: ralBlink 1.4s ease-in-out infinite; }
+  @keyframes ralBlink {
+    0%, 100% { border-color: #2A3540; background-color: transparent; }
+    50% { border-color: #D4A24C; background-color: rgba(212,162,76,0.10); }
+  }
+
+  .glow { animation: glowPulse 3s ease-in-out infinite; }
+  @keyframes glowPulse {
+    0%, 100% { box-shadow: 0 0 0px rgba(193,102,61,0); }
+    50% { box-shadow: 0 0 28px rgba(193,102,61,0.18); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ral-pending { border-color: #D4A24C; }
+}
