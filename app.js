@@ -1,27 +1,27 @@
-const step1=document.getElementById('step1');
-const step2=document.getElementById('step2');
-const ral=document.getElementById('ral');
-const slider=document.getElementById('slider');
 
-document.getElementById('next').addEventListener('click',()=>{
-  step1.classList.remove('active');
-  step2.classList.add('active');
-  update();
-});
-
-document.getElementById('back').addEventListener('click',()=>{
-  step2.classList.remove('active');
-  step1.classList.add('active');
-});
-
-slider.addEventListener('input',update);
-
+const state={tfr:null,company:null};
+function show(n){
+ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+ document.getElementById('s'+n).classList.add('active');
+ update();
+}
+slider.oninput=update;
 function update(){
- const pct=parseFloat(slider.value);
- document.getElementById('percent').textContent=slider.value.replace('.',',')+'%';
  const r=parseFloat((ral.value||'0').replace(/\./g,'').replace(',','.'))||0;
- const ann=r*pct/100;
- document.getElementById('summary').textContent=
- 'Contributo annuo: € '+ann.toLocaleString('it-IT',{minimumFractionDigits:2});
+ const p=parseFloat(slider.value);
+ pct.textContent=slider.value.replace('.',',')+'%';
+ contrib.textContent='Contributo annuo: € '+(r*p/100).toLocaleString('it-IT',{minimumFractionDigits:2});
+}
+function pickTfr(el,v){
+ document.querySelectorAll('#s3 .choice').forEach(c=>c.classList.remove('selected'));
+ el.classList.add('selected');
+ state.tfr=v;
+ next3.disabled=false;
+}
+function pickCompany(el,v){
+ document.querySelectorAll('#s4 .choice').forEach(c=>c.classList.remove('selected'));
+ el.classList.add('selected');
+ state.company=v;
+ finish.disabled=false;
 }
 update();
